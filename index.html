@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" /> 
+	<title>GeoNetwork OpenSource Mobile</title>
+	<link rel="stylesheet"  href="css/themes/default/jquery.mobile-1.3.1.min.css">
+	<script src="js/jquery.js"></script>
+	<script src="js/jquery.mobile-1.3.1.min.js"></script>
+	<link rel="stylesheet" href="css/leaflet.css" />
+	<!--[if lte IE 8]><link rel="stylesheet" href="css/leaflet.ie.css" /><![endif]-->
+	<script src="js/leaflet.js"></script>
+	<script src="config.js"></script>
+	<script src="js/app.js"></script>    
+	
+	<script>
+		var displayThumb = true;
+		var doneSearch=false;
+		var map,layerControl;
+		var pos="";
+	</script>
+	
+	<style type="text/css">
+	#map { min-height: 320px; height: 100%; margin: -15px;}
+	body {
+	padding: 0;
+	margin: 0;
+	}
+	html, body, {
+	height: 100%;
+	}
+	.ui-listview-filter-inset {
+		margin-top: 0;
+	}
+	</style>
+</head>
+<body>
+<div data-role="page"  id="pageInfo">
+
+<script>
+	$("#pageInfo").on("pageinit", function(event, ui){
+		$( "#tbFind2" ).on( "listviewbeforefilter", function ( e, data ) {
+				var $ul = $( this ),
+					$input = $( data.input ),
+					value = $input.val(),
+					html = "";
+					$ul.html( "" );
+				if ( value && value.length > 2 ) {
+					$ul.html( "<li><div class='ui-loader'><span class='ui-icon ui-icon-loading'></span></div></li>" );
+					$ul.listview( "refresh" );
+					$.ajax({
+						url: aurl+getGNurl()+"/srv/dut/main.search.suggest?field=any"+anamp+"q="+$input.val(),
+						dataType: "json"
+					})
+					.then( function ( response ) {
+						$.each( response[1], function ( i, val ) {
+							html += "<li>" + val + "</li>";
+						});
+						$ul.html( html );
+						$ul.listview( "refresh" );
+						$ul.trigger( "updatelayout");
+					});
+				}
+			});
+		$('#tbFind2').on('click', 'li', function () {
+			$(".ui-listview-filter input").val(this.innerHTML);
+			$("#tbFind2 li").each(function() { $(this).remove(); });
+			//$(".tbFind2").listview( "refresh" );
+
+			//$(".tbFind2").trigger( "updatelayout");
+			//$(".ui-listview-filter input").trigger("change");
+		});
+	});
+
+</script>
+
+	<div data-role="header" class="jqm-header"  data-position="fixed">
+	    <img src="logo.png" class="ui-btn-left">
+		<h1>Find spatial data</h1>
+	</div>
+	
+	<div data-role="content" class="jqm-content">
+	<form>
+	
+		<ul id="tbFind2" data-role="listview" data-inset="true" data-filter="true" data-filter-placeholder="Find spatial data..." data-filter-theme="d"></ul>
+	
+		
+		<!-- Choose location -->
+			<select name="where" id="where" >
+				<option value="local">At current location</option>
+				<!--<option value="indicate">Indicate area of interest</option>-->
+				<option value="none">No spatial filter</option>
+			</select>
+		
+	<br/>
+	<fieldset data-role="collapsible" data-theme="a" data-content-theme="d">
+     <legend>When</legend>
+	 <div data-role="fieldcontain">
+	 <label for="date-from" class="ui-input-text">From</label>
+     <input data-clear-btn="true" name="date-from" id="date-from" value="" type="date" data-inline="true">
+	 </div>
+	 <div data-role="fieldcontain">
+	 <label for="date-to" class="ui-input-text">To</label>
+     <input data-clear-btn="true" name="date-to" id="date-to" value="" type="date" data-inline="true">
+	 </div>
+	</fieldset>
+	
+	<input type="button" id="btFindBt" value="Search" onclick="doneSearch=false;$.mobile.changePage('#pageSearch')" />
+	</form>
+	</div>
+	
+	<div data-role="footer" data-id="foo1" data-position="fixed">
+		<div data-role="navbar">
+			<ul>
+				<li><a href="#pageInfo"  data-icon="home" class="ui-btn-active ui-state-persist">Search</a></li>
+				<li><a href="#pageSearch"  data-icon="search" >Results</a></li>
+				<li><a href="#pageMap"   data-icon="map">Map</a></li>
+				
+				<li><a href="#pageAbout"   data-icon="info">About</a></li>
+
+				
+			</ul>
+		</div><!-- /navbar -->
+	</div><!-- /footer -->
+
+</div><!-- /page -->
+
+<div data-role="page"  id="pageSearch">
+
+<script>
+$("#pageSearch").on("pageshow", function(event, ui){
+	if (!doneSearch) {
+		doneSearch=true;
+		getLocalResults();
+	}
+});
+
+function getGNurl(){
+var gnurl = $("#tbConn").val();
+if (!gnurl) gnurl="http://nationaalgeoresister.nl/geonetwork";
+if (gnurl.substring(0,4)!="http") gnurl = "http://"+gnurl;
+return gnurl;
+}
+
+function getLocalResults(){
+if ($("#where").val()=="local"){
+  if (navigator.geolocation)
+    {
+		navigator.geolocation.getCurrentPosition(getResults);
+    } else {
+		alert("Geolocation is not supported by this device.");
+		getResults();
+  }
+  }else{
+  //reset spatial filter
+  position="";
+  getResults();
+  }
+}
+
+function getResults(position) {
+
+$.mobile.loading( "show", {text: "Loading",textVisible: true});
+//clear results
+$('#searchDetails div').each(function(){$(this).remove()});
+
+if (position){
+	x=position.coords.latitude;
+	y=position.coords.longitude;
+	pos = "point("+y+" "+x+")";
+}
+result=[];
+var vl = $(".ui-listview-filter input").val();
+if (typeof(vl)=='undefined') vl="";
+
+$.ajax({	type:"GET", 
+			url:aurl+getGNurl()+"/srv/eng/q?fast=index"+anamp+"from=1"+anamp+"to=25"+anamp+"any="+vl+"*"+anamp+"dynamic=true"+anamp+"geometry="+pos+anamp+"creationDateFrom="+$("#date-from").val()+anamp+"creationDateTo="+$("#date-to").val(), 
+			datatype:"xml", 
+			success: function(data){
+
+	$(data).find("response").each(function(){
+
+		//For each record
+		$(this).find("metadata").each(function(){
+			var md = {wmslinks:[],title:"",oms:"",image:"",bounds:[],contact:""};
+			md.wmslinks = [];
+			// Check if link is defined
+
+			$(this).find("link").each(function(){
+				wmslink = splitLink($(this).text());
+				if (wmslink.isWMS) md.wmslinks.push(wmslink);
+				return false;
+			})
+			//Check if record has WMS url and layername defined >if so: create entry in table
+			md.title=$(this).find("title").text();
+			md.oms=$(this).find("abstract").text();
+			md.bounds = $(this).find("geoBox").text().split("|");
+			md.contact = $(this).find("responsibleParty").text().split("|")[2];
+			if (displayThumb){
+			md.image="media/default_thumbnail.png"
+			try{//check all images, get the first valid one
+				$(this).find("image").each(function(){
+					if (ValidUrl($(this).text().split("|")[1])){
+						md.image=$(this).text().split("|")[1];
+						return false;
+					}
+				});
+			} catch(err){}
+			}
+			result.push(md);
+		})
+	})
+	
+	//now push the data to listview
+	var output ="";
+	
+	if (result.length==0){
+		output +="<div data-role='collapsible' data-iconpos=\"right\"  data-content-theme=\"d\" ><h3>No results found</h3></div>";
+		
+	} else {
+	$(result).each(function(){
+		output +="<div data-role='collapsible' data-iconpos=\"right\"  data-content-theme=\"d\" ><h3>";
+		output +="<img src='"+this.image+"' style=\"height:35px;z-index:2;vertical-align:middle;padding-right:3px\"/>";
+		output +=this.title+"</h3>";
+		if (this.oms) output +="<p>"+this.oms + "<br/>";
+		if (this.contact) output+="<div style='color:#69f;'>"+this.contact+"</div><br/> ";
+		var bnds = "[]";
+		try {
+			bnds = "[["+this.bounds[1]+","+this.bounds[0]+"],["+this.bounds[3]+","+this.bounds[2]+"]]";
+		} catch(exp){}
+		$(this.wmslinks).each(function(){ 
+			if (this.url != "" && this.layerName != "") {
+				if (this.layerTitle=="") this.layerTitle = this.layerName;
+				
+				output +="<input type=\"button\" data-role=\"button\" onclick=\"add2map('"+this.url+"','"+this.layerName+"','"+this.layerTitle+"',"+bnds+");\" value=\"Add "+this.layerName+" to map\"/>";
+			}
+		})
+		output +="</p></div>";
+	});
+
+	
+	}
+	$('#searchDetails').append(output).collapsibleset('refresh');
+	
+	$.mobile.loading( "hide");
+},
+failure: function(){
+	alert("Connection error");
+	$.mobile.loading( "hide");
+}
+});
+}
+
+function add2map(url,name,title,bounds){
+	if (name==""){
+		alert('no layername');
+		return false;
+	}
+	var tmp = L.tileLayer.wms(url,{
+		layers: name,
+		format: 'image/png',
+		transparent: true,    
+		opacity: 0.7       
+	});
+	tmp.addTo(map);
+	layerControl.addOverlay(tmp,title);	
+	/*map.removeEventListener('click');
+	map.addEventListener('click', function (e) {
+		var latlngStr = '(' + e.latlng.lat.toFixed(3) + ', ' + e.latlng.lng.toFixed(3) + ')';
+		var BBOX = map.getBounds().toBBoxString();
+		var WIDTH = map.getSize().x;
+		var HEIGHT = map.getSize().y;
+		var X = map.layerPointToContainerPoint(e.layerPoint).x;
+		var Y = map.layerPointToContainerPoint(e.layerPoint).y;
+		var URL = url + (url.indexOf("?")?"":"?") + '&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS='+name+'&QUERY_LAYERS='+name+'&STYLES=&BBOX='+BBOX+'&FEATURE_COUNT=5&HEIGHT='+HEIGHT+'&WIDTH='+WIDTH+'&FORMAT=image%2Fpng&INFO_FORMAT=text%2Fhtml&SRS=EPSG%3A4326&X='+X+'&Y='+Y;
+		URL = escape(URL);
+		$.ajax({
+			url: "proxy.php?url=" + URL,
+			dataType: "html",
+			type: "GET",
+			success: function(data) {
+				if (data.indexOf("<table")>-1){
+					popup.setContent(data);
+					popup.setLatLng(e.latlng);
+					map.openPopup(popup);
+				}
+			}
+		});
+	});*/
+	if (bounds.length!=0) map.setView(new L.LatLngBounds(bounds[0],bounds[1]).getCenter(),map.getZoom());
+	//fitBounds(bounds);
+	
+	$.mobile.changePage('#pageMap');
+}
+
+function splitLink(linkNode){
+	var data=linkNode.split("|");
+	var result={}
+	try{ 
+		var wmsString = data[3];
+		if (wmsString=="OGC:WMS") result.isWMS=true; else result.isWMS = false; 
+	} catch(err){result.isWMS=false;}
+	try{result.url= data[2];}catch(err){result.title="";}
+	try{result.layerName=data[0];} catch(err){result.layerName="";}
+	try{result.layerTitle=data[1];}catch(err){result.layerTitle="";}
+	return result;
+}
+
+function ValidUrl(str) {
+  if(str.indexOf("http://")==0 || str.indexOf("https://")==0) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+</script>
+
+
+
+
+	<div data-role="header" class="jqm-header"  data-position="fixed">
+	    <img src="logo.png" class="ui-btn-left">
+		<h1>Results</h1>
+	</div>
+
+    <div data-role="content" class="jqm-content" >
+
+		<div data-role="collapsible-set" id="searchDetails"></div>
+					
+	</div>
+
+		<div data-role="footer" data-id="foo1" data-position="fixed">
+		<div data-role="navbar">
+			<ul>
+				<li><a href="#pageInfo"  data-icon="home">Search</a></li>
+				<li><a href="#pageSearch"  data-icon="search" class="ui-btn-active ui-state-persist" >Results</a></li>
+				<li><a href="#pageMap"   data-icon="map">Map</a></li>
+				
+				<li><a href="#pageAbout"   data-icon="info">About</a></li>
+
+			</ul>
+		</div><!-- /navbar -->
+	</div><!-- /footer -->
+
+</div><!-- /page -->
+
+<div data-role="page"  id="pageDetail">
+
+	<div data-role="header" class="jqm-header"  data-position="fixed">
+	    <img src="logo.png" class="ui-btn-left">
+		<h1>Programma</h1>
+	</div>
+
+        <div data-role="content" class="jqm-content" >
+
+	
+		<div data-role="collapsible-set" id="stageDetails"></div>
+					
+	</div>
+
+		<div data-role="footer" data-id="foo1" data-position="fixed">
+		<div data-role="navbar">
+			<ul>
+				<li><a href="#pageInfo"  data-icon="home">Search</a></li>
+				<li><a href="#pageSearch"  data-icon="search" >Results</a></li>
+				<li><a href="#pageMap"   data-icon="map">Map</a></li>
+				
+				<li><a href="#pageAbout"   data-icon="info">About</a></li>
+
+			</ul>
+		</div><!-- /navbar -->
+	</div><!-- /footer -->
+
+</div><!-- /page -->
+
+<div data-role="page"  id="pageMap">
+
+<script>
+	$("#pageMap").on("pageshow", function(event, ui){
+		$("#map").height($(window).height()-105);
+		if (map){
+		map.invalidateSize(false);
+		}
+    });
+</script>
+
+	<div data-role="header" class="jqm-header"  data-position="fixed">
+	    <img src="logo.png" class="ui-btn-left">
+		<h1>Map</h1>
+		<a href="javascript:void(map.locate({setView: true, maxZoom: 16}))" data-icon="star" class="ui-btn-right">GPS</a>
+	</div>
+	<div data-role="content" id="pageContent"><div id="map"></div></div>
+	<script>
+	if (!map){
+	map = L.map('map');
+	var bg = L.tileLayer('http://{s}.tile.cloudmade.com/'+cloudmadeCode+'/22677/256/{z}/{x}/{y}.png', {maxZoom: 18,attribution:"OSM contributors"});
+	bg.addTo(map);
+	layerControl = L.control.layers({background:bg});
+	layerControl.addTo(map);
+	map.setView([52,5],5);
+	}
+	</script>
+
+	<div data-role="footer" data-id="foo1" data-position="fixed">
+		<div data-role="navbar">
+			<ul>
+				<li><a href="#pageInfo"  data-icon="home">Search</a></li>
+				<li><a href="#pageSearch"  data-icon="search" >Results</a></li>
+				<li><a href="#pageMap"   data-icon="map" class="ui-btn-active ui-state-persist">Map</a></li>
+				
+				<li><a href="#pageAbout"   data-icon="info">About</a></li>
+
+			</ul>
+		</div><!-- /navbar -->
+	</div><!-- /footer -->
+	
+</div><!-- /page -->
+
+
+<div data-role="page" id="pageAbout">
+
+<script>
+function testConn(){
+	$.mobile.loading( "show", {text: "Loading",textVisible: true});
+	$.ajax({
+			url: aurl + getGNurl() + "/srv/eng/xml.info?type=site",
+			type: "GET",
+			success: function(data) {
+				$.mobile.loading( "hide");
+				try{
+					var ver = data.split("<version>")[1].split("</version>")[0].split(".");
+					if ((ver[0]=="2" && ver[1]>6)|| ver[0]>2) {
+						alert("Geonetwork on "+getGNurl()+" is online and the version "+ver.join(".")+" is supported");
+					} else {
+						alert("Geonetwork on "+getGNurl()+" is online, but the version "+ver.join(".")+" might not be supported");
+					}
+					} catch (exp){
+						alert("An error occured while retrieving geonetwork version");
+					}
+			},
+			failure: function(){
+				$.mobile.loading( "hide");
+				alert('connection error occured');
+			}
+	})
+}
+function setConn(sel){
+ if (sel.value != "") $("#tbConn").val(sel.value);
+ doneSearch=false;
+}
+</script>
+
+	<div data-role="header" class="jqm-header">
+	    <img src="logo.png" class="ui-btn-left">
+		<h1>About</h1>
+	</div>
+	
+	<div data-role="content" class="jqm-content" >
+ 	<h1>Cartalogue</h1>
+
+	<p>Cartalogue is a client for spatial catalogues. Currently the app can only do queries against recent versions of <a href="http://geonetwork-opensource.org" target=_blank>Geonetwork OpenSource</a></p>
+	<p>In the form below, you can select a catalogue to query against. You can even add you're own instance of Geonetwork OpenSource. Mind that the map currently only supports a spherical mercator projection (aka epsg:900913). 
+	WMS-ses not supporting this projection can not be displayed (and no warning is displayed).
+ 
+ <p>
+ 
+	<label for="tbConn" class="ui-input-text">Set Geonetwork url</label>
+     <input data-clear-btn="true" name="Conn" id="tbConn" value="http://nationaalgeoregister.nl/geonetwork" type="text"   data-inline="true" onchange="doneSearch=false;" >
+	 <input type="button" id="btTestConn" value="Test" onclick="testConn();"  data-inline="true" />
+
+     <select onchange="setConn(this)">
+		<option value="">-- Or select from list --</option>
+		<option value="http://nationaalgeoregister.nl/geonetwork">Dutch national portal; Nationaalgeoregister.nl</option>
+		<option value="http://www.geocat.ch/geonetwork">Swiss national portal; Geocat.ch</option>
+		<option value="https://www.dov.vlaanderen.be/geonetwork">Vlaanderen national portal; dov.vlaanderen.be</option>
+
+	</select>
+	
+	<h1>About</h1>
+		Cartalogue was founded by <a href="http://geocat.net" target="_top">GeoCat bv</a>, Bennekom. The code is on github using an MIT license. 
+		
+		Cartalogue is using following Open Source components:
+		<ul>
+			<li><a href="http://jquerymobile.com" target="_blank">Jquery mobile</a></li>
+			<li><a href="http://cordova.apache.org" target="_blank">Cordova</a></li>
+			<li><a href="http://LeafletJS.org" target="_blank">LeafletJS</a></li>
+			<li><a href="http://geonetwork-opensource.org" target="_blank">Geonetwork-opensource</a></li>
+		</ul>
+		Any comments can be send to <a href="mailto:support@geocat.net">support@geocat.net</a>.
+	</div>
+
+	<div data-role="footer" data-id="foo1" data-position="fixed">
+		<div data-role="navbar">
+			<ul>
+				<li><a href="#pageInfo"  data-icon="home">Search</a></li>
+				<li><a href="#pageSearch"  data-icon="search" >Results</a></li>
+				<li><a href="#pageMap"   data-icon="map">Map</a></li>
+				
+				<li><a href="#pageAbout"   data-icon="info" class="ui-btn-active ui-state-persist">About</a></li>
+			</ul>
+		</div><!-- /navbar -->
+	</div><!-- /footer -->
+
+</div><!-- /page -->
+
+</body>
+</html>
